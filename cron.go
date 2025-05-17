@@ -1,7 +1,6 @@
 package cron
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,7 +14,7 @@ const (
 	Multiple
 	Range
 	Step
-	Any // TODO from quartz
+	Any // TODO: Support for quartz-style "?"
 )
 
 type Field struct {
@@ -27,32 +26,35 @@ func (f Field) String() string {
 	switch f.Type {
 	case Exact:
 		if len(f.Values) != 1 {
-			panic(fmt.Sprintf("incorrect amount of values in exact Field; want (1); have(%d)", len(f.Values)))
+			panic(fmt.Sprintf("Exact type requires 1 value; got %d", len(f.Values)))
 		}
 		return strconv.Itoa(f.Values[0])
 	case Every:
 		return "*"
 	case Multiple:
-		if len(f.Values) <= 0 {
-			panic(fmt.Sprintf("incorrect amount of values in multiple Field; want (len>0); have(%d)", len(f.Values)))
+		if len(f.Values) == 0 {
+			panic("Multiple type requires at least one value")
 		}
-		var sb strings.Builder
-		for _, value := range f.Values {
-			sb.WriteString(strconv.Itoa(value) + ",")
+		strs := make([]string, len(f.Values))
+		for i, val := range f.Values {
+			strs[i] = strconv.Itoa(val)
 		}
-		str := sb.String()
-		return str[:len(str)-2] // Return without the final comma
+		return strings.Join(strs, ",")
 	case Range:
-		return strconv.Itoa(f.Values[0]) + "-" + strconv.Itoa(f.Values[1])
+		if len(f.Values) != 2 {
+			panic("Range type requires exactly 2 values")
+		}
+		return fmt.Sprintf("%d-%d", f.Values[0], f.Values[1])
 	case Step:
 		if len(f.Values) != 1 {
-			panic(fmt.Sprintf("incorrect amount of values in step Field; want (1); have(%d)", len(f.Values)))
+			panic("Step type requires 1 value")
 		}
-		return "*/" + strconv.Itoa(f.Values[0])
+		return fmt.Sprintf("*/%d", f.Values[0])
 	case Any:
 		return "?"
+	default:
+		return "???"
 	}
-	return "???"
 }
 
 type Job struct {
@@ -64,103 +66,101 @@ type Job struct {
 	Command   string
 }
 
-func (j Job) String() (s string) {
-	var sb strings.Builder
-	sb.WriteString(j.Minute.String() + " ")
-	sb.WriteString(j.Hour.String() + " ")
-	sb.WriteString(j.Day.String() + " ")
-	sb.WriteString(j.Month.String() + " ")
-	sb.WriteString(j.DayOfWeek.String() + " ")
-	sb.WriteString(j.Command)
-	return strings.TrimSpace(sb.String())
+func (j Job) String() string {
+	return fmt.Sprintf(
+		"%s %s %s %s %s %s",
+		j.Minute, j.Hour, j.Day, j.Month, j.DayOfWeek, j.Command,
+	)
 }
 
-func parseField(fieldString string) (field Field, err error) {
-	fieldStringTrimmed := strings.TrimSpace(fieldString)
-	if fieldStringTrimmed == "*" {
-		return Field{Type: Every, Values: []int{}}, err
-	}
-	if cut, found := strings.CutPrefix(fieldStringTrimmed, "*/"); found {
-		val, convErr := strconv.Atoi(cut)
-		if convErr != nil {
-			return Field{}, convErr
-		}
-		return Field{Type: Step, Values: []int{val}}, err
-	}
+func parseField(fieldString string) (Field, error) {
+	s := strings.TrimSpace(fieldString)
 
-	if split := strings.Split(fieldStringTrimmed, ","); len(split) > 1 {
-		for _, s := range split {
-			val, convErr := strconv.Atoi(s)
-			if convErr != nil {
-				return Field{}, convErr
+	switch {
+	case s == "*":
+		return Field{Type: Every}, nil
+
+	case strings.HasPrefix(s, "*/"):
+		val, err := strconv.Atoi(s[2:])
+		if err != nil {
+			return Field{}, err
+		}
+		return Field{Type: Step, Values: []int{val}}, nil
+
+	case strings.Contains(s, ","):
+		parts := strings.Split(s, ",")
+		values := make([]int, 0, len(parts))
+		for _, part := range parts {
+			val, err := strconv.Atoi(part)
+			if err != nil {
+				return Field{}, err
 			}
-			field.Values = append(field.Values, val)
+			values = append(values, val)
 		}
-		field.Type = Multiple
-		return field, err
-	}
+		return Field{Type: Multiple, Values: values}, nil
 
-	if split := strings.Split(fieldStringTrimmed, "-"); len(split) == 2 {
-		field.Values[0], err = strconv.Atoi(split[0])
+	case strings.Contains(s, "-"):
+		parts := strings.Split(s, "-")
+		if len(parts) != 2 {
+			return Field{}, fmt.Errorf("invalid range format: %s", s)
+		}
+		start, err := strconv.Atoi(parts[0])
 		if err != nil {
 			return Field{}, err
 		}
-		field.Values[1], err = strconv.Atoi(split[1])
+		end, err := strconv.Atoi(parts[1])
 		if err != nil {
 			return Field{}, err
 		}
+		return Field{Type: Range, Values: []int{start, end}}, nil
 
-		field.Type = Multiple
-		return field, err
-	}
+	case s == "?":
+		return Field{Type: Any}, nil
 
-	// Exact
-	val, convErr := strconv.Atoi(fieldStringTrimmed)
-	if convErr != nil {
-		return Field{}, convErr
+	default:
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return Field{}, err
+		}
+		return Field{Type: Exact, Values: []int{val}}, nil
 	}
-	return Field{Type: Exact, Values: []int{val}}, err
 }
 
-func Parse(expression string) (job Job, err error) {
-	stringFields := strings.Fields(expression)
-	commandArgs := stringFields[5:]
-	command := strings.Join(commandArgs, " ")
-	stringFields = stringFields[:5]
-	if len(stringFields) != 6 && len(stringFields) != 5 {
-		return Job{}, errors.New(fmt.Sprintf("expected 5 or 6 fields, got %d (including command)", len(stringFields)+1)) // +1 is for the command
+func Parse(expression string) (Job, error) {
+	parts := strings.Fields(expression)
+	if len(parts) < 6 {
+		return Job{}, fmt.Errorf("expected at least 6 fields (5 time + command), got %d", len(parts))
 	}
-	job.Minute, err = parseField(stringFields[0])
-	if err != nil {
-		return Job{}, err
+
+	timeFields := parts[:5]
+	command := strings.Join(parts[5:], " ")
+
+	job := Job{}
+	var err error
+
+	if job.Minute, err = parseField(timeFields[0]); err != nil {
+		return Job{}, fmt.Errorf("minute field: %w", err)
 	}
-	job.Hour, err = parseField(stringFields[1])
-	if err != nil {
-		return Job{}, err
+	if job.Hour, err = parseField(timeFields[1]); err != nil {
+		return Job{}, fmt.Errorf("hour field: %w", err)
 	}
-	job.Day, err = parseField(stringFields[2])
-	if err != nil {
-		return Job{}, err
+	if job.Day, err = parseField(timeFields[2]); err != nil {
+		return Job{}, fmt.Errorf("day field: %w", err)
 	}
-	job.Month, err = parseField(stringFields[3])
-	if err != nil {
-		return Job{}, err
+	if job.Month, err = parseField(timeFields[3]); err != nil {
+		return Job{}, fmt.Errorf("month field: %w", err)
 	}
-	job.DayOfWeek, err = parseField(stringFields[4])
-	if err != nil {
-		return Job{}, err
+	if job.DayOfWeek, err = parseField(timeFields[4]); err != nil {
+		return Job{}, fmt.Errorf("dayOfWeek field: %w", err)
 	}
+
 	job.Command = command
-	return job, err
+	return job, nil
 }
 
 func splitLastWord(input string) (string, string) {
-	lastSpace := strings.LastIndex(input, " ")
-	if lastSpace == -1 {
-		// No space found, return empty first part and entire input as second
-		return "", input
+	if idx := strings.LastIndex(input, " "); idx != -1 {
+		return input[:idx], input[idx+1:]
 	}
-	first := input[:lastSpace]
-	second := input[lastSpace+1:]
-	return first, second
+	return "", input
 }
