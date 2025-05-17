@@ -64,9 +64,55 @@ func (f Field) String() string {
 	}
 }
 
-// ToEnglish turns a job into an english, human-readable string. TODO improve this function.
+// ToEnglish turns a job into a human-readable English string.
 func (job Job) ToEnglish() string {
-	return ""
+	var sb strings.Builder
+
+	if strings.TrimSpace(job.Task) != "" {
+		sb.WriteString(fmt.Sprintf(`"%s"`, job.Task))
+		sb.WriteString(" scheduled to run ")
+	}
+
+	sb.WriteString(describeTimeField("minute", job.Minute))
+	sb.WriteString(", ")
+	sb.WriteString(describeTimeField("hour", job.Hour))
+	sb.WriteString(", ")
+	sb.WriteString(describeTimeField("day of month", job.Day))
+	sb.WriteString(", ")
+	sb.WriteString(describeTimeField("month", job.Month))
+	sb.WriteString(", ")
+	sb.WriteString(describeTimeField("day of the week", job.DayOfWeek))
+
+	return sb.String()
+}
+
+func describeTimeField(name string, f Field) string {
+	switch f.Type {
+	case Exact:
+		return fmt.Sprintf("at %s %d", name, f.Values[0])
+
+	case Every:
+		return fmt.Sprintf("every %s", name)
+
+	case Step:
+		return fmt.Sprintf("every %d %ss", f.Values[0], name)
+
+	case Range:
+		return fmt.Sprintf("from %s %d to %d", name, f.Values[0], f.Values[1])
+
+	case Multiple:
+		var parts []string
+		for _, v := range f.Values {
+			parts = append(parts, fmt.Sprintf("%d", v))
+		}
+		return fmt.Sprintf("at %ss %s", name, strings.Join(parts, ", "))
+
+	case Any:
+		return fmt.Sprintf("any %s", name)
+
+	default:
+		return fmt.Sprintf("unknown %s", name)
+	}
 }
 
 func (f Field) check(val int) bool {
