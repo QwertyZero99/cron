@@ -64,6 +64,11 @@ func (f Field) String() string {
 	}
 }
 
+// ToEnglish turns a job into an english, human-readable string. TODO improve this function.
+func (job Job) ToEnglish() string {
+	return ""
+}
+
 func (f Field) check(val int) bool {
 	switch f.Type {
 	case Exact:
