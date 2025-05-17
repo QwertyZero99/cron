@@ -146,7 +146,7 @@ func parseField(fieldString string) (Field, error) {
 
 	switch {
 	case s == "*":
-		return Field{Type: Every}, nil
+		return Field{Type: Every, Values: []int{}}, nil
 
 	case strings.HasPrefix(s, "*/"):
 		val, err := strconv.Atoi(s[2:])
@@ -197,7 +197,7 @@ func parseField(fieldString string) (Field, error) {
 // Parse parses a string in cron expression format (e.g. '* */5 5 * * echo "Hello, world"') into a `Job` struct.
 func Parse(expression string) (Job, error) {
 	parts := strings.Fields(expression)
-	if len(parts) < 6 {
+	if len(parts) < 5 {
 		return Job{}, fmt.Errorf("expected at least 6 fields (5 time + task), got %d", len(parts))
 	}
 
