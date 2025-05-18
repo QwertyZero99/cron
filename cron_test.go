@@ -177,7 +177,7 @@ func TestJob_ToEnglish(t *testing.T) {
 				DayOfWeek: tt.fields.DayOfWeek,
 				Task:      tt.fields.Task,
 			}
-			t.Log(fmt.Sprintf("got \"%v\" from %v", job.ToEnglish(), job))
+			t.Log(fmt.Sprintf("got \"%v\" from \"%v\"", job.Describe(), job))
 		})
 	}
 }
